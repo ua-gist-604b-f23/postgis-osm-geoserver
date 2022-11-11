@@ -35,7 +35,7 @@ type of data. In this exercise, create a new workspace for all your OSM data. To
 Refer to the geoserver documentation about how to add a Workspace. 
 - [https://docs.geoserver.org/stable/en/user/data/webadmin/workspaces.html](https://docs.geoserver.org/stable/en/user/data/webadmin/workspaces.html)
 
-![Workspace](screenshots/geoserver-create-workspace.png)
+![Workspace](media/geoserver-create-workspace.png)
 
 #### Create a data store named `osm`
 Before you can add the data from the database we need to tell geoserver about the data location. Geoserver uses the term
@@ -48,34 +48,34 @@ The database name will be either `hawaii` or `arizona`, depending on which versi
 Refer to the geoserver documentation about how to add a PostGIS Data Store. 
 - [https://docs.geoserver.org/stable/en/user/data/database/postgis.html](https://docs.geoserver.org/stable/en/user/data/database/postgis.html)
 
-![Data store](screenshots/geoserver-create-datastore.png)
+![Data store](media/geoserver-create-datastore.png)
 
 #### Add PostGIS layers to geoserver
 You worked with layers previously in geoserver but now are going to add them yourself. Read up on geoserver layers at
 [https://docs.geoserver.org/stable/en/user/data/webadmin/layers.html](https://docs.geoserver.org/stable/en/user/data/webadmin/layers.html). 
 
 Be sure to select the appropriate data source for the layer source next to `Add layer from [Choose One]`:
-![Data store](screenshots/geoserver-add-layer-1.png)
+![Data store](media/geoserver-add-layer-1.png)
 
 The next screen will list your data tables. By default they will not be published as layers until you click on `Publish`.
-![Data store](screenshots/geoserver-add-layer-2.png)
+![Data store](media/geoserver-add-layer-2.png)
 
 Clicking `Publish` on one of the layers brings up a multi-tabbed window.
-![Data store](screenshots/geoserver-add-layer-3.png)
+![Data store](media/geoserver-add-layer-3.png)
 
 To get started, scroll down to the section for `Bounding Box` and click `Compute from data` and `Calculate from native bounds` to populate the bounding box data.
 
-![Data store](screenshots/geoserver-add-layer-bbox.png)
+![Data store](media/geoserver-add-layer-bbox.png)
 
 Finally, this software has some legacy aspects to it. One is that _settings are not saved until you click on the `Save` button._ Be sure to click SAVE!
 
-![Data store](screenshots/geoserver-add-layer-save.png)
+![Data store](media/geoserver-add-layer-save.png)
 
 ##### Layer Preview
 To see a preview of your layer, click on `Layer Preview` in the left hand main menu, and then click `Open Layers` in the
 row for a given layer. This will bring up a minimal interactive map to look at your data. For example, this is what your `buildings_a` preview might look like (Note that screenshot has the geoserver instance running on `8080` but we are using `8180` for our purposes:
 
-![Buildings Layer Preview](screenshots/geoserver-layer-preview.png)
+![Buildings Layer Preview](media/geoserver-layer-preview.png)
 
 #### Repeat this process for all your OSM layers.
 
@@ -85,7 +85,7 @@ Right click on your `buildings` layer. Change the symbology to `Categorized` and
 Click `Classify` to load all the unique values for this column. Update the symbology if you desire. When you are satisfied,
 Click on the `Style` drop-down at the bottom of the dialog and select `Save style`. 
 
-![Save SLD](screenshots/qgis-postgis-osm-categorized-save.png)
+![Save SLD](media/qgis-postgis-osm-categorized-save.png)
 
 Save as `SLD Style File`. Give it the same name as the table name but with the `.sld` file suffix.
 Repeat for the tables: `pois`, `roads`, and `landuse`.
@@ -99,11 +99,11 @@ In Geoserver, click on `Styles` at the left main menu and then `Add a New Style`
 ` workspace. Click on the `Choose File` button
 and select the SLD file for the style you are creating, then click `Upload`. 
 
-![Data store](screenshots/geoserver-add-style.png)
+![Data store](media/geoserver-add-style.png)
 
 This will load the file and fill the dialog below with the text from the SLD file. Scroll down and inspect the loaded style:
 
-![Data store](screenshots/geoserver-add-style-sld-validated.png)
+![Data store](media/geoserver-add-style-sld-validated.png)
 
 Don't edit the SLD here, but just in case, click on `Validate` to make sure there are no validation errors, then `Apply` or `Save`.
 
@@ -119,7 +119,7 @@ The order listed is actually the `Drawing Order`, which will be in reverse order
 layers at the top of the list will be drawn first and layers at the bottom will be drawn last. Thus, you will want
 lines and points _below_ the polygon layers.
 
-![Data store](screenshots/geoserver-add-layergroup-drawing-order.png)
+![Data store](media/geoserver-add-layergroup-drawing-order.png)
 
 Be sure to `Generate Bounds` and then `Save` the Layer Group like you did for the Layers.
 
@@ -136,7 +136,7 @@ of geoserver webpage and find the `WMS_getCapabilities.url`.
 
 Once you are connected to geoserver localhost from within QGIS in the `WMS/WMTS` dialog, you should see your newly created `osm` Layer Group. 
 
-![qgis-wms-osm-layer-group](screenshots/qgis-add-wms-layer-list.png)
+![qgis-wms-osm-layer-group](media/qgis-add-wms-layer-list.png)
 
 #### Deliverable: QGIS Screenshot
 Take a screenshot of your QGIS desktop (including the layer list and the map) showing the OSM Workshop Layer Group. Name it `qgis_layer_group_preview.png`

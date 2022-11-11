@@ -1,0 +1,25 @@
+version: "3.8"
+services:
+
+  postgis:
+    image: "mdillon/postgis"
+    hostname: postgis
+    ports:
+      - "5432:5432"
+    volumes:
+      - /workspaces/geoserver-intro/postgres_data/data:/var/lib/postgresql/data
+      
+  geoserver:
+    image: "kartoza/geoserver"
+    ports:
+      - "8080:8080"
+    volumes:
+      - /workspaces/geoserver-intro/geoserver_data/data_dir:/opt/geoserver/data_dir
+    environment:
+      - GEOSERVER_ADMIN_USER=admin
+      - GEOSERVER_ADMIN_PASSWORD=geoserver
+      - SAMPLE_DATA=true
+
+networks:
+  default:
+    name: gist604b
