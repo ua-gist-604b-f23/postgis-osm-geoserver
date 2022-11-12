@@ -4,40 +4,34 @@
 # Licensed under the MIT License. See https://go.microsoft.com/fwlink/?linkid=2090316 for license information.
 #-------------------------------------------------------------------------------------------------------------
 #
-# Docs: https://github.com/microsoft/vscode-dev-containers/blob/main/script-library/docs/docker-in-docker.md
+# Docs: https://github.com/microsoft/vscode-dev-containers/blob/main/script-library/docs/common.md
 # Maintainer: The VS Code and Codespaces Teams
 #
-# Syntax: ./docker-in-docker-debian.sh [enable non-root docker access flag] [non-root user] [use moby] [Engine/CLI Version] [Major version for docker-compose] [azure DNS auto detection flag]
+# Syntax: ./common-debian.sh [install zsh flag] [username] [user UID] [user GID] [upgrade packages flag] [install Oh My Zsh! flag] [Add non-free packages]
 
-ENABLE_NONROOT_DOCKER=${1:-"true"}
-USERNAME=${2:-"automatic"}
-USE_MOBY=${3:-"true"}
-DOCKER_VERSION=${4:-"latest"} # The Docker/Moby Engine + CLI should match in version
-DOCKER_DASH_COMPOSE_VERSION=${5:-"v1"} # v1 or v2
-AZURE_DNS_AUTO_DETECTION=${6:-"true"}
-MICROSOFT_GPG_KEYS_URI="https://packages.microsoft.com/keys/microsoft.asc"
-DOCKER_MOBY_ARCHIVE_VERSION_CODENAMES="buster bullseye bionic focal jammy"
-DOCKER_LICENSED_ARCHIVE_VERSION_CODENAMES="buster bullseye bionic focal hirsute impish jammy"
-
-# Default: Exit on any failure.
 set -e
 
-# Setup STDERR.
-err() {
-    echo "(!) $*" >&2
-}
+INSTALL_ZSH=${1:-"true"}
+USERNAME=${2:-"automatic"}
+USER_UID=${3:-"automatic"}
+USER_GID=${4:-"automatic"}
+UPGRADE_PACKAGES=${5:-"true"}
+INSTALL_OH_MYS=${6:-"true"}
+ADD_NON_FREE_PACKAGES=${7:-"false"}
+SCRIPT_DIR="$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)"
+MARKER_FILE="/usr/local/etc/vscode-dev-containers/common"
 
 if [ "$(id -u)" -ne 0 ]; then
-    err 'Script must be run as root. Use sudo, su, or add "USER root" to your Dockerfile before running this script.'
+    echo -e 'Script must be run as root. Use sudo, su, or add "USER root" to your Dockerfile before running this script.'
     exit 1
 fi
 
-###################
-# Helper Functions
-# See: https://github.com/microsoft/vscode-dev-containers/blob/main/script-library/shared/utils.sh
-###################
+# Ensure that login shells get the correct path if the user updated the PATH using ENV.
+rm -f /etc/profile.d/00-restore-env.sh
+echo "export PATH=${PATH//$(sh -lc 'echo $PATH')/\$PATH}" > /etc/profile.d/00-restore-env.sh
+chmod +x /etc/profile.d/00-restore-env.sh
 
-# Determine the appropriate non-root user
+# If in automatic mode, determine if a user already exists, if not use vscode
 if [ "${USERNAME}" = "auto" ] || [ "${USERNAME}" = "automatic" ]; then
     USERNAME=""
     POSSIBLE_USERS=("vscode" "node" "codespace" "$(awk -v val=1000 -F ":" '$3==val{print $1}' /etc/passwd)")
@@ -48,28 +42,25 @@ if [ "${USERNAME}" = "auto" ] || [ "${USERNAME}" = "automatic" ]; then
         fi
     done
     if [ "${USERNAME}" = "" ]; then
-        USERNAME=root
+        USERNAME=vscode
     fi
-elif [ "${USERNAME}" = "none" ] || ! id -u ${USERNAME} > /dev/null 2>&1; then
+elif [ "${USERNAME}" = "none" ]; then
     USERNAME=root
+    USER_UID=0
+    USER_GID=0
 fi
 
-# Get central common setting
-get_common_setting() {
-    if [ "${common_settings_file_loaded}" != "true" ]; then
-        curl -sfL "https://aka.ms/vscode-dev-containers/script-library/settings.env" 2>/dev/null -o /tmp/vsdc-settings.env || echo "Could not download settings file. Skipping."
-        common_settings_file_loaded=true
-    fi
-    if [ -f "/tmp/vsdc-settings.env" ]; then
-        local multi_line=""
-        if [ "$2" = "true" ]; then multi_line="-z"; fi
-        local result="$(grep ${multi_line} -oP "$1=\"?\K[^\"]+" /tmp/vsdc-settings.env | tr -d '\0')"
-        if [ ! -z "${result}" ]; then declare -g $1="${result}"; fi
-    fi
-    echo "$1=${!1}"
-}
+# Load markers to see which steps have already run
+if [ -f "${MARKER_FILE}" ]; then
+    echo "Marker file found:"
+    cat "${MARKER_FILE}"
+    source "${MARKER_FILE}"
+fi
 
-# Function to run apt-get if needed
+# Ensure apt is in non-interactive to avoid prompts
+export DEBIAN_FRONTEND=noninteractive
+
+# Function to call apt-get if needed
 apt_get_update_if_needed()
 {
     if [ ! -d "/var/lib/apt/lists" ] || [ "$(ls /var/lib/apt/lists/ | wc -l)" = "0" ]; then
@@ -80,314 +71,389 @@ apt_get_update_if_needed()
     fi
 }
 
-# Checks if packages are installed and installs them if not
-check_packages() {
-    if ! dpkg -s "$@" > /dev/null 2>&1; then
+# Run install apt-utils to avoid debconf warning then verify presence of other common developer tools and dependencies
+if [ "${PACKAGES_ALREADY_INSTALLED}" != "true" ]; then
+
+    package_list="apt-utils \
+        openssh-client \
+        gnupg2 \
+        dirmngr \
+        iproute2 \
+        procps \
+        lsof \
+        htop \
+        net-tools \
+        psmisc \
+        curl \
+        wget \
+        rsync \
+        ca-certificates \
+        unzip \
+        zip \
+        nano \
+        vim-tiny \
+        less \
+        jq \
+        lsb-release \
+        apt-transport-https \
+        dialog \
+        libc6 \
+        libgcc1 \
+        libkrb5-3 \
+        libgssapi-krb5-2 \
+        libicu[0-9][0-9] \
+        liblttng-ust[0-9] \
+        libstdc++6 \
+        zlib1g \
+        locales \
+        sudo \
+        ncdu \
+        man-db \
+        strace \
+        manpages \
+        manpages-dev \
+        postgresql-client \
+        init-system-helpers"
+        
+    # Needed for adding manpages-posix and manpages-posix-dev which are non-free packages in Debian
+    if [ "${ADD_NON_FREE_PACKAGES}" = "true" ]; then
+        # Bring in variables from /etc/os-release like VERSION_CODENAME
+        . /etc/os-release
+        sed -i -E "s/deb http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME} main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME} main contrib non-free/" /etc/apt/sources.list
+        sed -i -E "s/deb-src http:\/\/(deb|httredir)\.debian\.org\/debian ${VERSION_CODENAME} main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME} main contrib non-free/" /etc/apt/sources.list
+        sed -i -E "s/deb http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME}-updates main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME}-updates main contrib non-free/" /etc/apt/sources.list
+        sed -i -E "s/deb-src http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME}-updates main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME}-updates main contrib non-free/" /etc/apt/sources.list
+        sed -i "s/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main contrib non-free/" /etc/apt/sources.list
+        sed -i "s/deb-src http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main contrib non-free/" /etc/apt/sources.list
+        sed -i "s/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main contrib non-free/" /etc/apt/sources.list 
+        sed -i "s/deb-src http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main contrib non-free/" /etc/apt/sources.list
+        # Handle bullseye location for security https://www.debian.org/releases/bullseye/amd64/release-notes/ch-information.en.html
+        sed -i "s/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main contrib non-free/" /etc/apt/sources.list
+        sed -i "s/deb-src http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main contrib non-free/" /etc/apt/sources.list
+        echo "Running apt-get update..."
+        apt-get update
+        package_list="${package_list} manpages-posix manpages-posix-dev"
+    else
         apt_get_update_if_needed
-        apt-get -y install --no-install-recommends "$@"
     fi
-}
 
-# Figure out correct version of a three part version number is not passed
-find_version_from_git_tags() {
-    local variable_name=$1
-    local requested_version=${!variable_name}
-    if [ "${requested_version}" = "none" ]; then return; fi
-    local repository=$2
-    local prefix=${3:-"tags/v"}
-    local separator=${4:-"."}
-    local last_part_optional=${5:-"false"}    
-    if [ "$(echo "${requested_version}" | grep -o "." | wc -l)" != "2" ]; then
-        local escaped_separator=${separator//./\\.}
-        local last_part
-        if [ "${last_part_optional}" = "true" ]; then
-            last_part="(${escaped_separator}[0-9]+)?"
-        else
-            last_part="${escaped_separator}[0-9]+"
-        fi
-        local regex="${prefix}\\K[0-9]+${escaped_separator}[0-9]+${last_part}$"
-        local version_list="$(git ls-remote --tags ${repository} | grep -oP "${regex}" | tr -d ' ' | tr "${separator}" "." | sort -rV)"
-        if [ "${requested_version}" = "latest" ] || [ "${requested_version}" = "current" ] || [ "${requested_version}" = "lts" ]; then
-            declare -g ${variable_name}="$(echo "${version_list}" | head -n 1)"
-        else
-            set +e
-                declare -g ${variable_name}="$(echo "${version_list}" | grep -E -m 1 "^${requested_version//./\\.}([\\.\\s]|$)")"
-            set -e
+    # Install libssl1.1 if available
+    if [[ ! -z $(apt-cache --names-only search ^libssl1.1$) ]]; then
+        package_list="${package_list}       libssl1.1"
+    fi
+    
+    # Install appropriate version of libssl1.0.x if available
+    libssl_package=$(dpkg-query -f '${db:Status-Abbrev}\t${binary:Package}\n' -W 'libssl1\.0\.?' 2>&1 || echo '')
+    if [ "$(echo "$LIlibssl_packageBSSL" | grep -o 'libssl1\.0\.[0-9]:' | uniq | sort | wc -l)" -eq 0 ]; then
+        if [[ ! -z $(apt-cache --names-only search ^libssl1.0.2$) ]]; then
+            # Debian 9
+            package_list="${package_list}       libssl1.0.2"
+        elif [[ ! -z $(apt-cache --names-only search ^libssl1.0.0$) ]]; then
+            # Ubuntu 18.04, 16.04, earlier
+            package_list="${package_list}       libssl1.0.0"
         fi
     fi
-    if [ -z "${!variable_name}" ] || ! echo "${version_list}" | grep "^${!variable_name//./\\.}$" > /dev/null 2>&1; then
-        err "Invalid ${variable_name} value: ${requested_version}\nValid values:\n${version_list}" >&2
-        exit 1
+
+    echo "Packages to verify are installed: ${package_list}"
+    apt-get -y install --no-install-recommends ${package_list} 2> >( grep -v 'debconf: delaying package configuration, since apt-utils is not installed' >&2 )
+        
+    # Install git if not already installed (may be more recent than distro version)
+    if ! type git > /dev/null 2>&1; then
+        apt-get -y install --no-install-recommends git
     fi
-    echo "${variable_name}=${!variable_name}"
-}
 
-###########################################
-# Start docker-in-docker installation
-###########################################
-
-# Ensure apt is in non-interactive to avoid prompts
-export DEBIAN_FRONTEND=noninteractive
-
-
-# Source /etc/os-release to get OS info
-. /etc/os-release
-# Fetch host/container arch.
-architecture="$(dpkg --print-architecture)"
-
-# Check if distro is suppported
-if [ "${USE_MOBY}" = "true" ]; then
-    # 'get_common_setting' allows attribute to be updated remotely
-    get_common_setting DOCKER_MOBY_ARCHIVE_VERSION_CODENAMES
-    if [[ "${DOCKER_MOBY_ARCHIVE_VERSION_CODENAMES}" != *"${VERSION_CODENAME}"* ]]; then
-        err "Unsupported  distribution version '${VERSION_CODENAME}'. To resolve, either: (1) set feature option '\"moby\": false' , or (2) choose a compatible OS distribution"
-        err "Support distributions include:  ${DOCKER_MOBY_ARCHIVE_VERSION_CODENAMES}"
-        exit 1
-    fi
-    echo "Distro codename  '${VERSION_CODENAME}'  matched filter  '${DOCKER_MOBY_ARCHIVE_VERSION_CODENAMES}'"
-else
-    get_common_setting DOCKER_LICENSED_ARCHIVE_VERSION_CODENAMES
-    if [[ "${DOCKER_LICENSED_ARCHIVE_VERSION_CODENAMES}" != *"${VERSION_CODENAME}"* ]]; then
-        err "Unsupported distribution version '${VERSION_CODENAME}'. To resolve, please choose a compatible OS distribution"
-        err "Support distributions include:  ${DOCKER_LICENSED_ARCHIVE_VERSION_CODENAMES}"
-        exit 1
-    fi
-    echo "Distro codename  '${VERSION_CODENAME}'  matched filter  '${DOCKER_LICENSED_ARCHIVE_VERSION_CODENAMES}'"
+    PACKAGES_ALREADY_INSTALLED="true"
 fi
 
-# Install dependencies
-check_packages apt-transport-https curl ca-certificates pigz iptables gnupg2 dirmngr
-if ! type git > /dev/null 2>&1; then
+if [ "${POSTGRES_INSTALLED}" != "true" ]; then
+# Create the file repository configuration:
+    sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+
+    # Import the repository signing key:
+    wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+
+    # Update the package lists:
+    sudo apt update
+    sudo apt-get -y install postgresql postgis 
+
+    POSTGRES_INSTALLED="true"
+fi
+
+
+# Get to latest versions of all packages
+if [ "${UPGRADE_PACKAGES}" = "true" ]; then
     apt_get_update_if_needed
-    apt-get -y install git
+    apt-get -y upgrade --no-install-recommends
+    apt-get autoremove -y
 fi
 
-# Swap to legacy iptables for compatibility
-if type iptables-legacy > /dev/null 2>&1; then
-    update-alternatives --set iptables /usr/sbin/iptables-legacy
-    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+# Ensure at least the en_US.UTF-8 UTF-8 locale is available.
+# Common need for both applications and things like the agnoster ZSH theme.
+if [ "${LOCALE_ALREADY_SET}" != "true" ] && ! grep -o -E '^\s*en_US.UTF-8\s+UTF-8' /etc/locale.gen > /dev/null; then
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen 
+    locale-gen
+    LOCALE_ALREADY_SET="true"
 fi
 
-
-
-# Set up the necessary apt repos (either Microsoft's or Docker's)
-if [ "${USE_MOBY}" = "true" ]; then
-
-    # Name of open source engine/cli
-    engine_package_name="moby-engine"
-    cli_package_name="moby-cli"
-
-    # Import key safely and import Microsoft apt repo
-    get_common_setting MICROSOFT_GPG_KEYS_URI
-    curl -sSL ${MICROSOFT_GPG_KEYS_URI} | gpg --dearmor > /usr/share/keyrings/microsoft-archive-keyring.gpg
-    echo "deb [arch=${architecture} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/microsoft-${ID}-${VERSION_CODENAME}-prod ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/microsoft.list
-else
-    # Name of licensed engine/cli
-    engine_package_name="docker-ce"
-    cli_package_name="docker-ce-cli"
-
-    # Import key safely and import Docker apt repo
-    curl -fsSL https://download.docker.com/linux/${ID}/gpg | gpg --dearmor > /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-fi
-
-# Refresh apt lists
-apt-get update
-
-# Soft version matching
-if [ "${DOCKER_VERSION}" = "latest" ] || [ "${DOCKER_VERSION}" = "lts" ] || [ "${DOCKER_VERSION}" = "stable" ]; then
-    # Empty, meaning grab whatever "latest" is in apt repo
-    engine_version_suffix=""
-    cli_version_suffix=""
-else
-    # Fetch a valid version from the apt-cache (eg: the Microsoft repo appends +azure, breakfix, etc...)
-    docker_version_dot_escaped="${DOCKER_VERSION//./\\.}"
-    docker_version_dot_plus_escaped="${docker_version_dot_escaped//+/\\+}"
-    # Regex needs to handle debian package version number format: https://www.systutorials.com/docs/linux/man/5-deb-version/
-    docker_version_regex="^(.+:)?${docker_version_dot_plus_escaped}([\\.\\+ ~:-]|$)"
-    set +e # Don't exit if finding version fails - will handle gracefully
-        cli_version_suffix="=$(apt-cache madison ${cli_package_name} | awk -F"|" '{print $2}' | sed -e 's/^[ \t]*//' | grep -E -m 1 "${docker_version_regex}")"
-        engine_version_suffix="=$(apt-cache madison ${engine_package_name} | awk -F"|" '{print $2}' | sed -e 's/^[ \t]*//' | grep -E -m 1 "${docker_version_regex}")"
-    set -e
-    if [ -z "${engine_version_suffix}" ] || [ "${engine_version_suffix}" = "=" ] || [ -z "${cli_version_suffix}" ] || [ "${cli_version_suffix}" = "=" ] ; then
-        err "No full or partial Docker / Moby version match found for \"${DOCKER_VERSION}\" on OS ${ID} ${VERSION_CODENAME} (${architecture}). Available versions:"
-        apt-cache madison ${cli_package_name} | awk -F"|" '{print $2}' | grep -oP '^(.+:)?\K.+'
-        exit 1
+# Create or update a non-root user to match UID/GID.
+group_name="${USERNAME}"
+if id -u ${USERNAME} > /dev/null 2>&1; then
+    # User exists, update if needed
+    if [ "${USER_GID}" != "automatic" ] && [ "$USER_GID" != "$(id -g $USERNAME)" ]; then 
+        group_name="$(id -gn $USERNAME)"
+        groupmod --gid $USER_GID ${group_name}
+        usermod --gid $USER_GID $USERNAME
     fi
-    echo "engine_version_suffix ${engine_version_suffix}"
-    echo "cli_version_suffix ${cli_version_suffix}"
-fi
-
-# Install Docker / Moby CLI if not already installed
-if type docker > /dev/null 2>&1 && type dockerd > /dev/null 2>&1; then
-    echo "Docker / Moby CLI and Engine already installed."
+    if [ "${USER_UID}" != "automatic" ] && [ "$USER_UID" != "$(id -u $USERNAME)" ]; then 
+        usermod --uid $USER_UID $USERNAME
+    fi
 else
-    if [ "${USE_MOBY}" = "true" ]; then
-        # Install engine
-        set +e # Handle error gracefully
-            apt-get -y install --no-install-recommends moby-cli${cli_version_suffix} moby-buildx moby-engine${engine_version_suffix}
-            if [ $? -ne 0 ]; then
-                err "Packages for moby not available in OS ${ID} ${VERSION_CODENAME} (${architecture}). To resolve, either: (1) set feature option '\"moby\": false' , or (2) choose a compatible OS version (eg: 'ubuntu-20.04')."
-                exit 1
-            fi
-        set -e
-
-        # Install compose
-        apt-get -y install --no-install-recommends moby-compose || err "Package moby-compose (Docker Compose v2) not available for OS ${ID} ${VERSION_CODENAME} (${architecture}). Skipping."
+    # Create user
+    if [ "${USER_GID}" = "automatic" ]; then
+        groupadd $USERNAME
     else
-        apt-get -y install --no-install-recommends docker-ce-cli${cli_version_suffix} docker-ce${engine_version_suffix}
-        # Install compose
-        apt-get -y install --no-install-recommends docker-compose-plugin || echo "(*) Package docker-compose-plugin (Docker Compose v2) not available for OS ${ID} ${VERSION_CODENAME} (${architecture}). Skipping."
+        groupadd --gid $USER_GID $USERNAME
     fi
-fi
-
-echo "Finished installing docker / moby!"
-
-# Install Docker Compose if not already installed and is on a supported architecture
-if type docker-compose > /dev/null 2>&1; then
-    echo "Docker Compose v1 already installed."
-else
-    target_compose_arch="${architecture}"
-    if [ "${target_compose_arch}" = "amd64" ]; then
-        target_compose_arch="x86_64"
-    fi
-    if [ "${target_compose_arch}" != "x86_64" ]; then
-        # Use pip to get a version that runs on this architecture
-        if ! dpkg -s python3-minimal python3-pip libffi-dev python3-venv > /dev/null 2>&1; then
-            apt_get_update_if_needed
-            apt-get -y install python3-minimal python3-pip libffi-dev python3-venv
-        fi
-        export PIPX_HOME=/usr/local/pipx
-        mkdir -p ${PIPX_HOME}
-        export PIPX_BIN_DIR=/usr/local/bin
-        export PYTHONUSERBASE=/tmp/pip-tmp
-        export PIP_CACHE_DIR=/tmp/pip-tmp/cache
-        pipx_bin=pipx
-        if ! type pipx > /dev/null 2>&1; then
-            pip3 install --disable-pip-version-check --no-cache-dir --user pipx
-            pipx_bin=/tmp/pip-tmp/bin/pipx
-        fi
-        ${pipx_bin} install --pip-args '--no-cache-dir --force-reinstall' docker-compose
-        rm -rf /tmp/pip-tmp
+    if [ "${USER_UID}" = "automatic" ]; then 
+        useradd -s /bin/bash --gid $USERNAME -m $USERNAME
     else
-        compose_v1_version="1"
-        find_version_from_git_tags compose_v1_version "https://github.com/docker/compose" "tags/"
-        echo "(*) Installing docker-compose ${compose_v1_version}..."
-        curl -fsSL "https://github.com/docker/compose/releases/download/${compose_v1_version}/docker-compose-Linux-x86_64" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
+        useradd -s /bin/bash --uid $USER_UID --gid $USERNAME -m $USERNAME
     fi
 fi
 
-# Install docker-compose switch if not already installed - https://github.com/docker/compose-switch#manual-installation
-current_v1_compose_path="$(which docker-compose)"
-target_v1_compose_path="$(dirname "${current_v1_compose_path}")/docker-compose-v1"
-if ! type compose-switch > /dev/null 2>&1; then
-    echo "(*) Installing compose-switch..."
-    compose_switch_version="latest"
-    find_version_from_git_tags compose_switch_version "https://github.com/docker/compose-switch"
-    curl -fsSL "https://github.com/docker/compose-switch/releases/download/v${compose_switch_version}/docker-compose-linux-${architecture}" -o /usr/local/bin/compose-switch
-    chmod +x /usr/local/bin/compose-switch
-    # TODO: Verify checksum once available: https://github.com/docker/compose-switch/issues/11
-
-    # Setup v1 CLI as alternative in addition to compose-switch (which maps to v2)
-    mv "${current_v1_compose_path}" "${target_v1_compose_path}"
-    update-alternatives --install /usr/local/bin/docker-compose docker-compose /usr/local/bin/compose-switch 99
-    update-alternatives --install /usr/local/bin/docker-compose docker-compose "${target_v1_compose_path}" 1
+# Add sudo support for non-root user
+if [ "${USERNAME}" != "root" ] && [ "${EXISTING_NON_ROOT_USER}" != "${USERNAME}" ]; then
+    echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME
+    chmod 0440 /etc/sudoers.d/$USERNAME
+    EXISTING_NON_ROOT_USER="${USERNAME}"
 fi
-if [ "${DOCKER_DASH_COMPOSE_VERSION}" = "v1" ]; then
-    update-alternatives --set docker-compose "${target_v1_compose_path}"
+
+# ** Shell customization section **
+if [ "${USERNAME}" = "root" ]; then 
+    user_rc_path="/root"
 else
-    update-alternatives --set docker-compose /usr/local/bin/compose-switch
+    user_rc_path="/home/${USERNAME}"
 fi
 
-# If init file already exists, exit
-if [ -f "/usr/local/share/docker-init.sh" ]; then
-    echo "/usr/local/share/docker-init.sh already exists, so exiting."
+# Restore user .bashrc defaults from skeleton file if it doesn't exist or is empty
+if [ ! -f "${user_rc_path}/.bashrc" ] || [ ! -s "${user_rc_path}/.bashrc" ] ; then
+    cp  /etc/skel/.bashrc "${user_rc_path}/.bashrc"
+fi
+
+# Restore user .profile defaults from skeleton file if it doesn't exist or is empty
+if  [ ! -f "${user_rc_path}/.profile" ] || [ ! -s "${user_rc_path}/.profile" ] ; then
+    cp  /etc/skel/.profile "${user_rc_path}/.profile"
+fi
+
+# .bashrc/.zshrc snippet
+rc_snippet="$(cat << 'EOF'
+if [ -z "${USER}" ]; then export USER=$(whoami); fi
+if [[ "${PATH}" != *"$HOME/.local/bin"* ]]; then export PATH="${PATH}:$HOME/.local/bin"; fi
+# Display optional first run image specific notice if configured and terminal is interactive
+if [ -t 1 ] && [[ "${TERM_PROGRAM}" = "vscode" || "${TERM_PROGRAM}" = "codespaces" ]] && [ ! -f "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed" ]; then
+    if [ -f "/usr/local/etc/vscode-dev-containers/first-run-notice.txt" ]; then
+        cat "/usr/local/etc/vscode-dev-containers/first-run-notice.txt"
+    elif [ -f "/workspaces/.codespaces/shared/first-run-notice.txt" ]; then
+        cat "/workspaces/.codespaces/shared/first-run-notice.txt"
+    fi
+    mkdir -p "$HOME/.config/vscode-dev-containers"
+    # Mark first run notice as displayed after 10s to avoid problems with fast terminal refreshes hiding it
+    ((sleep 10s; touch "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed") &)
+fi
+# Set the default git editor if not already set
+if [ -z "$(git config --get core.editor)" ] && [ -z "${GIT_EDITOR}" ]; then
+    if  [ "${TERM_PROGRAM}" = "vscode" ]; then
+        if [[ -n $(command -v code-insiders) &&  -z $(command -v code) ]]; then 
+            export GIT_EDITOR="code-insiders --wait"
+        else 
+            export GIT_EDITOR="code --wait"
+        fi
+    fi
+fi
+EOF
+)"
+
+# code shim, it fallbacks to code-insiders if code is not available
+cat << 'EOF' > /usr/local/bin/code
+#!/bin/sh
+get_in_path_except_current() {
+    which -a "$1" | grep -A1 "$0" | grep -v "$0"
+}
+code="$(get_in_path_except_current code)"
+if [ -n "$code" ]; then
+    exec "$code" "$@"
+elif [ "$(command -v code-insiders)" ]; then
+    exec code-insiders "$@"
+else
+    echo "code or code-insiders is not installed" >&2
+    exit 127
+fi
+EOF
+chmod +x /usr/local/bin/code
+
+# systemctl shim - tells people to use 'service' if systemd is not running
+cat << 'EOF' > /usr/local/bin/systemctl
+#!/bin/sh
+set -e
+if [ -d "/run/systemd/system" ]; then
+    exec /bin/systemctl "$@"
+else
+    echo '\n"systemd" is not running in this container due to its overhead.\nUse the "service" command to start services instead. e.g.: \n\nservice --status-all'
+fi
+EOF
+chmod +x /usr/local/bin/systemctl
+
+# Codespaces bash and OMZ themes - partly inspired by https://github.com/ohmyzsh/ohmyzsh/blob/master/themes/robbyrussell.zsh-theme
+codespaces_bash="$(cat \
+<<'EOF'
+# Codespaces bash prompt theme
+__bash_prompt() {
+    local userpart='`export XIT=$? \
+        && [ ! -z "${GITHUB_USER}" ] && echo -n "\[\033[0;32m\]@${GITHUB_USER} " || echo -n "\[\033[0;32m\]\u " \
+        && [ "$XIT" -ne "0" ] && echo -n "\[\033[1;31m\]➜" || echo -n "\[\033[0m\]➜"`'
+    local gitbranch='`\
+        if [ "$(git config --get codespaces-theme.hide-status 2>/dev/null)" != 1 ]; then \
+            export BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null); \
+            if [ "${BRANCH}" != "" ]; then \
+                echo -n "\[\033[0;36m\](\[\033[1;31m\]${BRANCH}" \
+                && if git ls-files --error-unmatch -m --directory --no-empty-directory -o --exclude-standard ":/*" > /dev/null 2>&1; then \
+                        echo -n " \[\033[1;33m\]✗"; \
+                fi \
+                && echo -n "\[\033[0;36m\]) "; \
+            fi; \
+        fi`'
+    local lightblue='\[\033[1;34m\]'
+    local removecolor='\[\033[0m\]'
+    PS1="${userpart} ${lightblue}\w ${gitbranch}${removecolor}\$ "
+    unset -f __bash_prompt
+}
+__bash_prompt
+EOF
+)"
+
+codespaces_zsh="$(cat \
+<<'EOF'
+# Codespaces zsh prompt theme
+__zsh_prompt() {
+    local prompt_username
+    if [ ! -z "${GITHUB_USER}" ]; then 
+        prompt_username="@${GITHUB_USER}"
+    else
+        prompt_username="%n"
+    fi
+    PROMPT="%{$fg[green]%}${prompt_username} %(?:%{$reset_color%}➜ :%{$fg_bold[red]%}➜ )" # User/exit code arrow
+    PROMPT+='%{$fg_bold[blue]%}%(5~|%-1~/…/%3~|%4~)%{$reset_color%} ' # cwd
+    PROMPT+='$([ "$(git config --get codespaces-theme.hide-status 2>/dev/null)" != 1 ] && git_prompt_info)' # Git status
+    PROMPT+='%{$fg[white]%}$ %{$reset_color%}'
+    unset -f __zsh_prompt
+}
+ZSH_THEME_GIT_PROMPT_PREFIX="%{$fg_bold[cyan]%}(%{$fg_bold[red]%}"
+ZSH_THEME_GIT_PROMPT_SUFFIX="%{$reset_color%} "
+ZSH_THEME_GIT_PROMPT_DIRTY=" %{$fg_bold[yellow]%}✗%{$fg_bold[cyan]%})"
+ZSH_THEME_GIT_PROMPT_CLEAN="%{$fg_bold[cyan]%})"
+__zsh_prompt
+EOF
+)"
+
+# Add RC snippet and custom bash prompt
+if [ "${RC_SNIPPET_ALREADY_ADDED}" != "true" ]; then
+    echo "${rc_snippet}" >> /etc/bash.bashrc
+    echo "${codespaces_bash}" >> "${user_rc_path}/.bashrc"
+    echo 'export PROMPT_DIRTRIM=4' >> "${user_rc_path}/.bashrc"
+    if [ "${USERNAME}" != "root" ]; then
+        echo "${codespaces_bash}" >> "/root/.bashrc"
+        echo 'export PROMPT_DIRTRIM=4' >> "/root/.bashrc"
+    fi
+    chown ${USERNAME}:${group_name} "${user_rc_path}/.bashrc"
+    RC_SNIPPET_ALREADY_ADDED="true"
+fi
+
+# Optionally install and configure zsh and Oh My Zsh!
+if [ "${INSTALL_ZSH}" = "true" ]; then
+    if ! type zsh > /dev/null 2>&1; then
+        apt_get_update_if_needed
+        apt-get install -y zsh
+    fi
+    if [ "${ZSH_ALREADY_INSTALLED}" != "true" ]; then
+        echo "${rc_snippet}" >> /etc/zsh/zshrc
+        ZSH_ALREADY_INSTALLED="true"
+    fi
+
+    # Adapted, simplified inline Oh My Zsh! install steps that adds, defaults to a codespaces theme.
+    # See https://github.com/ohmyzsh/ohmyzsh/blob/master/tools/install.sh for official script.
+    oh_my_install_dir="${user_rc_path}/.oh-my-zsh"
+    if [ ! -d "${oh_my_install_dir}" ] && [ "${INSTALL_OH_MYS}" = "true" ]; then
+        template_path="${oh_my_install_dir}/templates/zshrc.zsh-template"
+        user_rc_file="${user_rc_path}/.zshrc"
+        umask g-w,o-w
+        mkdir -p ${oh_my_install_dir}
+        git clone --depth=1 \
+            -c core.eol=lf \
+            -c core.autocrlf=false \
+            -c fsck.zeroPaddedFilemode=ignore \
+            -c fetch.fsck.zeroPaddedFilemode=ignore \
+            -c receive.fsck.zeroPaddedFilemode=ignore \
+            "https://github.com/ohmyzsh/ohmyzsh" "${oh_my_install_dir}" 2>&1
+        echo -e "$(cat "${template_path}")\nDISABLE_AUTO_UPDATE=true\nDISABLE_UPDATE_PROMPT=true" > ${user_rc_file}
+        sed -i -e 's/ZSH_THEME=.*/ZSH_THEME="codespaces"/g' ${user_rc_file}
+
+        mkdir -p ${oh_my_install_dir}/custom/themes
+        echo "${codespaces_zsh}" > "${oh_my_install_dir}/custom/themes/codespaces.zsh-theme"
+        # Shrink git while still enabling updates
+        cd "${oh_my_install_dir}"
+        git repack -a -d -f --depth=1 --window=1
+        # Copy to non-root user if one is specified
+        if [ "${USERNAME}" != "root" ]; then
+            cp -rf "${user_rc_file}" "${oh_my_install_dir}" /root
+            chown -R ${USERNAME}:${group_name} "${user_rc_path}"
+        fi
+    fi
+fi
+
+# Persist image metadata info, script if meta.env found in same directory
+meta_info_script="$(cat << 'EOF'
+#!/bin/sh
+. /usr/local/etc/vscode-dev-containers/meta.env
+# Minimal output
+if [ "$1" = "version" ] || [ "$1" = "image-version" ]; then
+    echo "${VERSION}"
+    exit 0
+elif [ "$1" = "release" ]; then
+    echo "${GIT_REPOSITORY_RELEASE}"
+    exit 0
+elif [ "$1" = "content" ] || [ "$1" = "content-url" ] || [ "$1" = "contents" ] || [ "$1" = "contents-url" ]; then
+    echo "${CONTENTS_URL}"
     exit 0
 fi
-echo "docker-init doesnt exist, adding..."
-
-# Add user to the docker group
-if [ "${ENABLE_NONROOT_DOCKER}" = "true" ]; then
-    if ! getent group docker > /dev/null 2>&1; then
-        groupadd docker
-    fi
-
-    usermod -aG docker ${USERNAME}
-fi
-
-tee /usr/local/share/docker-init.sh > /dev/null \
-<< EOF
-#!/bin/sh
-#-------------------------------------------------------------------------------------------------------------
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the MIT License. See https://go.microsoft.com/fwlink/?linkid=2090316 for license information.
-#-------------------------------------------------------------------------------------------------------------
-set -e
-AZURE_DNS_AUTO_DETECTION=$AZURE_DNS_AUTO_DETECTION
+#Full output
+echo
+echo "Development container image information"
+echo
+if [ ! -z "${VERSION}" ]; then echo "- Image version: ${VERSION}"; fi
+if [ ! -z "${DEFINITION_ID}" ]; then echo "- Definition ID: ${DEFINITION_ID}"; fi
+if [ ! -z "${VARIANT}" ]; then echo "- Variant: ${VARIANT}"; fi
+if [ ! -z "${GIT_REPOSITORY}" ]; then echo "- Source code repository: ${GIT_REPOSITORY}"; fi
+if [ ! -z "${GIT_REPOSITORY_RELEASE}" ]; then echo "- Source code release/branch: ${GIT_REPOSITORY_RELEASE}"; fi
+if [ ! -z "${BUILD_TIMESTAMP}" ]; then echo "- Timestamp: ${BUILD_TIMESTAMP}"; fi
+if [ ! -z "${CONTENTS_URL}" ]; then echo && echo "More info: ${CONTENTS_URL}"; fi
+echo
 EOF
-
-tee -a /usr/local/share/docker-init.sh > /dev/null \
-<< 'EOF'
-dockerd_start="$(cat << 'INNEREOF'
-    # explicitly remove dockerd and containerd PID file to ensure that it can start properly if it was stopped uncleanly
-    # ie: docker kill <ID>
-    find /run /var/run -iname 'docker*.pid' -delete || :
-    find /run /var/run -iname 'container*.pid' -delete || :
-    ## Dind wrapper script from docker team, adapted to a function
-    # Maintained: https://github.com/moby/moby/blob/master/hack/dind
-    export container=docker
-    if [ -d /sys/kernel/security ] && ! mountpoint -q /sys/kernel/security; then
-        mount -t securityfs none /sys/kernel/security || {
-            echo >&2 'Could not mount /sys/kernel/security.'
-            echo >&2 'AppArmor detection and --privileged mode might break.'
-        }
-    fi
-    # Mount /tmp (conditionally)
-    if ! mountpoint -q /tmp; then
-        mount -t tmpfs none /tmp
-    fi
-    # cgroup v2: enable nesting
-    if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-        # move the processes from the root group to the /init group,
-        # otherwise writing subtree_control fails with EBUSY.
-        # An error during moving non-existent process (i.e., "cat") is ignored.
-        mkdir -p /sys/fs/cgroup/init
-        xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
-        # enable controllers
-        sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
-            > /sys/fs/cgroup/cgroup.subtree_control
-    fi
-    ## Dind wrapper over.
-    # Handle DNS
-    set +e
-    cat /etc/resolv.conf | grep -i 'internal.cloudapp.net'
-    if [ $? -eq 0 ] && [ ${AZURE_DNS_AUTO_DETECTION} = "true" ]
-    then
-        echo "Setting dockerd Azure DNS."
-        CUSTOMDNS="--dns 168.63.129.16"
-    else
-        echo "Not setting dockerd DNS manually."
-        CUSTOMDNS=""
-    fi
-    set -e
-    # Start docker/moby engine
-    ( dockerd $CUSTOMDNS > /tmp/dockerd.log 2>&1 ) &
-INNEREOF
 )"
-# Start using sudo if not invoked as root
-if [ "$(id -u)" -ne 0 ]; then
-    sudo /bin/sh -c "${dockerd_start}"
-else
-    eval "${dockerd_start}"
+if [ -f "${SCRIPT_DIR}/meta.env" ]; then
+    mkdir -p /usr/local/etc/vscode-dev-containers/
+    cp -f "${SCRIPT_DIR}/meta.env" /usr/local/etc/vscode-dev-containers/meta.env
+    echo "${meta_info_script}" > /usr/local/bin/devcontainer-info
+    chmod +x /usr/local/bin/devcontainer-info
 fi
-set +e
-# Execute whatever commands were passed in (if any). This allows us
-# to set this script to ENTRYPOINT while still executing the default CMD.
-exec "$@"
-EOF
 
-chmod +x /usr/local/share/docker-init.sh
-chown ${USERNAME}:root /usr/local/share/docker-init.sh
+# Write marker file
+mkdir -p "$(dirname "${MARKER_FILE}")"
+echo -e "\
+    PACKAGES_ALREADY_INSTALLED=${PACKAGES_ALREADY_INSTALLED}\n\
+    POSTGRES_INSTALLED=${POSTGRES_INSTALLED}\n\
+    LOCALE_ALREADY_SET=${LOCALE_ALREADY_SET}\n\
+    EXISTING_NON_ROOT_USER=${EXISTING_NON_ROOT_USER}\n\
+    RC_SNIPPET_ALREADY_ADDED=${RC_SNIPPET_ALREADY_ADDED}\n\
+    ZSH_ALREADY_INSTALLED=${ZSH_ALREADY_INSTALLED}" > "${MARKER_FILE}"
 
-echo 'docker-in-docker-debian script has completed!'
+echo "Done!"
