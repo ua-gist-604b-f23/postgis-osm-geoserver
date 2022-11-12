@@ -3,7 +3,10 @@
 ## Background
 Geoserver most commonly serves data from databases. Having databases back a geoserver layer allows the layer to be dynamic, meaning that geoserver will always serve the most recent data. Updating static files such as shapefiles is quite cumbersome and error-prone, not to mention slow. In this lab you are going to create geoserver layers from the PostGIS tables of OpenStreetMap data derived from geofrabrik shapefiles. As part of this process, you will also create Style Layer Descriptors, or SLDs, from QGIS, to allow geoserver to customize the symbolization of your data.
 
-**Important: Screenshots of instructions below reflect a time when this lab was not running in codespaces. Wherever it says "localhost:8080" you will need to use your Local Address from the codespace's forwarded port 8080.**
+### Important note on screenshots in this doc
+**Screenshots of instructions below reflect a time when this lab was not running in codespaces.**
+- **Wherever it says "localhost:8080" you will need to use your `Local Address` from the codespace's forwarded port 8080.**
+- **Screenshots reflect a time when this lab was using `arizona` as the database. Update to `hawaii` as needed**
 
 ## Assignment
 ### Deliverables: 
@@ -13,6 +16,27 @@ Create a github branch named `assignment` with the following files, submitting a
 - `pois.sld`
 - `geoserver_layer_group_preview.png` - OpenLayers preview of `osm` Layer Group, zoomed into Tucson 
 - `qgis_layer_group_preview.png` - QGIS view of `osm` Layer Group
+
+### Prep your codespace
+First, bring up your two services: `postgis` and `geoserver`. In a Terminal Window, enter:
+```
+docker compose up -d
+```
+Check the status of the `mdillon/postgis` container by looking at the Docker Extension. This is accessed by clicking on the whale in the left side of this codespace. A green triangle indicates it is running while a red square indicates it is stopped.
+
+Once `mdillon/postgis` is running, run the Hawaiian OSM data import. I made a [docker container](https://github.com/ua-gist-open-source/docker-compose-populate) that automates downloading and importing this data into a postgis database. 
+```
+docker run  --network gist604b -e STATE=hawaii -e DATABASE=hawaii aaryno/populate-docker-geo populate-postgis.sh
+```
+
+You can check on the data via the PostGIS Extension (Elephant icon). The settings are the same as before:
+- host: `localhost`
+- username: `postgres`
+- password: `postgres`
+- port: `5432`
+- `Standard Connection`
+- database: `hawaii`
+- name: `osm-hawaii`
 
 ### Load the layers in Geoserver
 Find out your Local Address of your forwarded port in your browser. 
@@ -47,7 +71,7 @@ Refer to the geoserver documentation about how to add a PostGIS Data Store.
 You worked with layers previously in geoserver but now are going to add them yourself. Read up on geoserver layers at
 [https://docs.geoserver.org/stable/en/user/data/webadmin/layers.html](https://docs.geoserver.org/stable/en/user/data/webadmin/layers.html). 
 
-Be sure to select the appropriate data source for the layer source next to `Add layer from [Choose One]`:
+Be sure to select the appropriate data source for the layer source next to `Add layer from [Choose One]`. Note that the hostname is `postgis`, which is something special we did with the docker compose setup.
 ![Data store](media/geoserver-add-layer-1.png)
 
 The next screen will list your data tables. By default they will not be published as layers until you click on `Publish`.

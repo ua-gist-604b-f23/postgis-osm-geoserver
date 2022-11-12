@@ -18,9 +18,18 @@ services:
     environment:
       - GEOSERVER_ADMIN_USER=admin
       - GEOSERVER_ADMIN_PASSWORD=geoserver
-      - SAMPLE_DATA=true
       - HTTP_PROXY_NAME=${CODESPACE_NAME}-8080.preview.app.github.dev
       - HTTP_SCHEME=https
+      - MAXIMUM_MEMORY=756M
+      - INITIAL_MEMORY=128M
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 500M
 
 networks:
   default:
