@@ -1,32 +1,25 @@
 # Assignment: PostGIS to Geoserver
 
 ## Background
-Geoserver most commonly serves data from databases. Having databases back a geoserver layer allows the layer to be dynamic, meaning that geoserver will always serve the most recent data. Updating static files such as shapefiles is quite
-cumbersome and error-prone, not to mention slow. In this lab you are going to create geoserver layers from the PostGIS tables you created. As part of this process, you will also create Style Layer Descriptors, or SLDs, from QGIS, to allow geoserver to customize the symbolization of your data.
+Geoserver most commonly serves data from databases. Having databases back a geoserver layer allows the layer to be dynamic, meaning that geoserver will always serve the most recent data. Updating static files such as shapefiles is quite cumbersome and error-prone, not to mention slow. In this lab you are going to create geoserver layers from the PostGIS tables of OpenStreetMap data derived from geofrabrik shapefiles. As part of this process, you will also create Style Layer Descriptors, or SLDs, from QGIS, to allow geoserver to customize the symbolization of your data.
 
-## Prerequisites
-Geoserver and Postgresql must be running. In a production environment these would be external services running on
-managed (possibly dedicated) servers. In this class, you are running them on your workstation through docker compose.
+**Important: Screenshots of instructions below reflect a time when this lab was not running in codespaces. Wherever it says "localhost:8080" you will need to use your Local Address from the codespace's forwarded port 8080.**
 
 ## Assignment
 ### Deliverables: 
-Create a github branch named `osm` with the following files, submitting as a Pull Request to `master`:
+Create a github branch named `assignment` with the following files, submitting as a Pull Request to `master`:
 - `landuse.sld`
 - `roads.sld`
 - `pois.sld`
 - `geoserver_layer_group_preview.png` - OpenLayers preview of `osm` Layer Group, zoomed into Tucson 
 - `qgis_layer_group_preview.png` - QGIS view of `osm` Layer Group
 
-### Import data from OSM
-I wrote a utility to download data from an OSM data provider, geofabrik, and insert it into your postgis database. 
-Be sure to have your `postgis` docker container running from the previous assignment, then run this:
-```
-docker run  --network gist604b -e STATE=hawaii -e DATABASE=hawaii aaryno/populate-docker-geo populate-postgis.sh
-```
-You will see (hopefully) a lot of `INSERT 0 1` lines as the data is being imported into your database. It will take several minutes.
-
 ### Load the layers in Geoserver
-Visit http://localhost:8280/geoserver in your browser. 
+Find out your Local Address of your forwarded port in your browser. 
+
+![codespace-ports.png](./media/codespace-ports.png)
+
+Add the `geoserver/web` to the Local Address to get the URL to geoserver and open it in a web browser. Remember the username/password are in your docker-compose.yml file but they default to `admin`/`geoserver`.
 
 #### Create a workspace named `osm`
 Geoserver uses workspaces to organize data. Generally speaking, you would create a workspace for a project or a specific
@@ -73,7 +66,7 @@ Finally, this software has some legacy aspects to it. One is that _settings are 
 
 ##### Layer Preview
 To see a preview of your layer, click on `Layer Preview` in the left hand main menu, and then click `Open Layers` in the
-row for a given layer. This will bring up a minimal interactive map to look at your data. For example, this is what your `buildings_a` preview might look like (Note that screenshot has the geoserver instance running on `8080` but we are using `8180` for our purposes:
+row for a given layer. This will bring up a minimal interactive map to look at your data. For example, this is what your `buildings_a` preview might look like:
 
 ![Buildings Layer Preview](media/geoserver-layer-preview.png)
 
@@ -130,11 +123,11 @@ of your browser. Name it `geoserver_layer_group_preview.png`
 ### Load the Geoserver Layer Group from QGIS
 
 In QGIS, click `Layer` -> `Add Layer` -> `WMS/WMTS`. You should have your local geoserver connection saved from
-previously but, if not, add a new connection to localhost by adding the url to the WMS GetCapabilities request. 
+previously but, if not, add a new connection to your geoserver instance by adding the url to the WMS GetCapabilities request. 
 While remembering the URL could be handy, it will be easiest for you to visit the `Demos` link on the left-hand main menu
 of geoserver webpage and find the `WMS_getCapabilities.url`. 
 
-Once you are connected to geoserver localhost from within QGIS in the `WMS/WMTS` dialog, you should see your newly created `osm` Layer Group. 
+Once you are connected to your geoserver instance from within QGIS in the `WMS/WMTS` dialog, you should see your newly created `osm` Layer Group. 
 
 ![qgis-wms-osm-layer-group](media/qgis-add-wms-layer-list.png)
 

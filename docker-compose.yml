@@ -19,6 +19,8 @@ services:
       - GEOSERVER_ADMIN_USER=admin
       - GEOSERVER_ADMIN_PASSWORD=geoserver
       - SAMPLE_DATA=true
+      - HTTP_PROXY_NAME=${CODESPACE_NAME}-8080.preview.app.github.dev
+      - HTTP_SCHEME=https
 
 networks:
   default:
